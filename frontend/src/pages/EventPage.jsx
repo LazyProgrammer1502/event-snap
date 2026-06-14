@@ -101,7 +101,6 @@ export default function EventPage() {
           ref={fileInput}
           type="file"
           accept="image/*"
-          capture="environment"
           multiple
           onChange={handleFiles}
           className="hidden"
