@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import api from "../api/axios";
+import { useAuth } from "../context/AuthContext";
+
+// Cloudinary trick: inserting "fl_attachment" into the URL tells Cloudinary to
+// serve the image as a download (Content-Disposition: attachment) instead of
+// opening it in the browser. Cleaner than fetching the file ourselves.
+const downloadUrl = (url) => url.replace("/upload/", "/upload/fl_attachment/");
 
 export default function EventPage() {
-  const { slug } = useParams(); // the code from the URL /event/:slug
+  const { slug } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+
   const [eventName, setEventName] = useState("");
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const [lightbox, setLightbox] = useState(null); // url of the photo opened full-screen
+  const [lightbox, setLightbox] = useState(null); // the full photo object being viewed
   const fileInput = useRef(null);
 
   const loadPhotos = () =>
@@ -20,9 +29,7 @@ export default function EventPage() {
       })
       .catch((err) => setError(err.response?.data?.error || "Couldn't load this event."));
 
-  // Load once, then POLL every 8s so new photos from other guests appear
-  // automatically — that's what makes the gallery feel "live" without a
-  // websocket. The cleanup stops the timer when you leave the page.
+  // Load once, then poll every 8s so other guests' photos appear automatically.
   useEffect(() => {
     loadPhotos();
     const t = setInterval(loadPhotos, 8000);
@@ -30,9 +37,6 @@ export default function EventPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  // Sending a file isn't JSON — it's multipart form data. We build a FormData
-  // object, append the file under the field name the backend expects ("photo"),
-  // and axios sets the right Content-Type automatically.
   const handleFiles = async (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
@@ -49,14 +53,32 @@ export default function EventPage() {
       setError(err.response?.data?.error || "Upload failed. Try a smaller image.");
     } finally {
       setUploading(false);
-      e.target.value = ""; // reset so the same file can be picked again
+      e.target.value = "";
+    }
+  };
+
+  const handleDelete = async (photo) => {
+    if (!confirm("Delete this photo? This can't be undone.")) return;
+    try {
+      await api.delete(`/events/${slug}/photos/${photo._id}`);
+      setLightbox(null);
+      await loadPhotos();
+    } catch (err) {
+      alert(err.response?.data?.error || "Couldn't delete the photo.");
     }
   };
 
   return (
     <div className="min-h-screen pb-28">
-      {/* Hero */}
-      <header className="bg-ink px-5 pb-8 pt-10 text-center text-white">
+      {/* Hero with back button */}
+      <header className="relative bg-ink px-5 pb-8 pt-10 text-center text-white">
+        <button
+          onClick={() => navigate("/")}
+          className="absolute left-4 top-9 flex items-center gap-1 text-sm text-white/80 hover:text-white"
+          aria-label="Back to your events"
+        >
+          <span aria-hidden>←</span> Back
+        </button>
         <p className="text-xs font-medium uppercase tracking-widest text-amber">Shared album</p>
         <h1 className="font-display mt-1 text-3xl font-semibold">{eventName || "Loading…"}</h1>
         <p className="mt-2 text-sm text-white/70">
@@ -77,7 +99,7 @@ export default function EventPage() {
             {photos.map((p) => (
               <button
                 key={p._id}
-                onClick={() => setLightbox(p.url)}
+                onClick={() => setLightbox(p)}
                 className="group relative aspect-square overflow-hidden rounded-xl bg-black/5"
               >
                 <img
@@ -95,16 +117,9 @@ export default function EventPage() {
         )}
       </main>
 
-      {/* Sticky upload bar — big tap target, opens the phone camera */}
+      {/* Sticky upload bar */}
       <div className="fixed inset-x-0 bottom-0 border-t border-black/5 bg-canvas/95 px-5 py-4 backdrop-blur">
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={handleFiles}
-          className="hidden"
-        />
+        <input ref={fileInput} type="file" accept="image/*" capture="environment" multiple onChange={handleFiles} className="hidden" />
         <button
           onClick={() => fileInput.current?.click()}
           disabled={uploading}
@@ -114,10 +129,40 @@ export default function EventPage() {
         </button>
       </div>
 
-      {/* Lightbox */}
+      {/* Lightbox with download + delete */}
       {lightbox && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setLightbox(null)}>
-          <img src={lightbox} alt="" className="max-h-full max-w-full rounded-lg" />
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/95">
+          <div className="flex-1 overflow-hidden p-4" onClick={() => setLightbox(null)}>
+            <img src={lightbox.url} alt="" className="mx-auto h-full max-w-full rounded-lg object-contain" />
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-t border-white/10 bg-black px-4 py-4">
+            <span className="truncate text-sm text-white/70">by {lightbox.uploaderName || "guest"}</span>
+            <div className="flex shrink-0 gap-2">
+              {/* Download — uses the Cloudinary fl_attachment URL */}
+              <a
+                href={downloadUrl(lightbox.url)}
+                className="rounded-lg bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20"
+              >
+                Download
+              </a>
+              {/* Delete — only shown on the current user's own photos */}
+              {String(lightbox.uploader) === String(user?.id) && (
+                <button
+                  onClick={() => handleDelete(lightbox)}
+                  className="rounded-lg bg-coral px-3 py-2 text-sm font-semibold text-white hover:bg-coral/90"
+                >
+                  Delete
+                </button>
+              )}
+              <button
+                onClick={() => setLightbox(null)}
+                className="rounded-lg border border-white/20 px-3 py-2 text-sm font-medium text-white"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

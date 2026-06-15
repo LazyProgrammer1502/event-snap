@@ -48,4 +48,26 @@ async function listPhotos(req, res) {
   }
 }
 
-module.exports = { uploadPhoto, listPhotos };
+// DELETE /api/events/:slug/photos/:photoId
+// Only the person who uploaded the photo (or the event host) can delete it.
+async function deletePhoto(req, res) {
+  try {
+    const photo = await Photo.findById(req.params.photoId);
+    if (!photo) return res.status(404).json({ error: "Photo not found" });
+
+    const event = await Event.findById(photo.event);
+    const isUploader = photo.uploader.equals(req.user._id);
+    const isHost = event && event.host.equals(req.user._id);
+    if (!isUploader && !isHost) return res.status(403).json({ error: "You can only delete your own photos" });
+
+    // Remove the file from Cloudinary too, otherwise it lingers (and bills) there.
+    await cloudinary.uploader.destroy(photo.publicId);
+    await photo.deleteOne();
+
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { uploadPhoto, listPhotos, deletePhoto };

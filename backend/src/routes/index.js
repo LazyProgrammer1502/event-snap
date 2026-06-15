@@ -4,7 +4,7 @@ const router = express.Router();
 const { protect } = require("../middleware/auth");
 const { register, login } = require("../controllers/authController");
 const { createEvent, myEvents, getEvent, getQr } = require("../controllers/eventController");
-const { uploadPhoto, listPhotos } = require("../controllers/photoController");
+const { uploadPhoto, listPhotos, deletePhoto } = require("../controllers/photoController");
 
 // Keep the file in memory (we stream it straight to Cloudinary), cap at 10MB,
 // and accept images only.
@@ -28,5 +28,6 @@ router.get("/events/:slug/qr", protect, getQr);
 // Photos
 router.post("/events/:slug/photos", protect, upload.single("photo"), uploadPhoto);
 router.get("/events/:slug/photos", protect, listPhotos);
+router.delete("/events/:slug/photos/:photoId", protect, deletePhoto);
 
 module.exports = router;
